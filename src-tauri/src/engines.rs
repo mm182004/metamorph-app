@@ -73,6 +73,7 @@ pub trait ConversionEngine {
         source_path: &str,
         target_format: &str,
         output_dir: &str,
+        app_handle: &tauri::AppHandle,
     ) -> Result<String, String>;
 }
 
@@ -89,9 +90,17 @@ impl ConversionEngine for ImageCrateEngine {
         source_path: &str,
         target_format: &str,
         output_dir: &str,
+        app_handle: &tauri::AppHandle,
     ) -> Result<String, String> {
         use std::path::Path;
         use image::ImageFormat;
+        use tauri::Emitter;
+        use crate::ProgressPayload;
+
+        let _ = app_handle.emit("conversion-progress", ProgressPayload {
+            percentage: 10.0,
+            message: format!("Preparing to convert to {}...", target_format.to_uppercase()),
+        });
 
         // 1. Map the target string ("png", "jpg") to the image crate's format enum.
         let output_format = match target_format.to_lowercase().as_str() {
@@ -105,7 +114,6 @@ impl ConversionEngine for ImageCrateEngine {
         };
 
         // 2. Construct the output file path.
-        // We extract the base name (e.g. "photo" from "photo.png")
         let source_name = Path::new(source_path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -114,13 +122,19 @@ impl ConversionEngine for ImageCrateEngine {
         let output_filename = format!("{}.{}", source_name, target_format);
         let output_path = Path::new(output_dir).join(output_filename);
 
+        let _ = app_handle.emit("conversion-progress", ProgressPayload {
+            percentage: 40.0,
+            message: "Decoding source image into memory...".to_string(),
+        });
+
         // 3. Open and decode the source image into memory.
-        // CONCEPT: The `?` Operator
-        // The `?` at the end of a line means: "If this returned Ok(value), unwrap the value.
-        // If it returned Err, immediately exit this function and return the Err to the caller."
-        // We use `.map_err()` to transform `image::ImageError` into our `String` error type first.
         let img = image::open(source_path)
             .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        let _ = app_handle.emit("conversion-progress", ProgressPayload {
+            percentage: 70.0,
+            message: format!("Encoding image as {}...", target_format.to_uppercase()),
+        });
 
         // 4. Encode and save the image to the target path.
         img.save_with_format(&output_path, output_format)

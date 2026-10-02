@@ -215,16 +215,14 @@ pub async fn run_ffmpeg(
     let mut progress = FfmpegProgress::new(total_us);
 
     // 6. Read lines from stderr as they arrive.
-    // CONCEPT: `while let` with async
-    // `.next_line().await` suspends this task until a new line is available.
-    // When FFmpeg exits, it returns `Ok(None)` and the loop ends.
     while let Ok(Some(line)) = reader.next_line().await {
         if let Some(pct) = progress.parse_line(&line) {
             // CONCEPT: Tauri emit()
             // Push the percentage to the frontend in real-time.
-            // The frontend listens with `listen("conversion-progress", ...)`.
-            // We intentionally ignore emit errors (e.g. if the window closed).
-            let _ = app_handle.emit("conversion-progress", pct);
+            let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+                percentage: pct,
+                message: format!("Processing audio/video... {:.1}%", pct),
+            });
         }
     }
 
@@ -240,7 +238,10 @@ pub async fn run_ffmpeg(
     }
 
     // 8. Final 100% event in case FFmpeg didn't emit `progress=end`.
-    let _ = app_handle.emit("conversion-progress", 100.0_f64);
+    let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+        percentage: 100.0,
+        message: "Finalizing media...".to_string(),
+    });
 
     Ok(output_str)
 }

@@ -77,7 +77,15 @@ pub async fn run_libreoffice(
     source_path: &str,
     target_ext: &str,
     output_dir: &str,
+    app_handle: &tauri::AppHandle,
 ) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+        percentage: 10.0,
+        message: "Starting LibreOffice engine...".to_string(),
+    });
+
     // 1. Locate the LibreOffice binary
     let soffice = find_libreoffice()
         .ok_or_else(|| "LibreOffice not found. Please install LibreOffice.".to_string())?;
@@ -85,6 +93,11 @@ pub async fn run_libreoffice(
     // 2. Look up the LibreOffice format string
     let lo_format = lo_format_string(target_ext)
         .ok_or_else(|| format!("LibreOffice does not support target format: {}", target_ext))?;
+
+    let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+        percentage: 40.0,
+        message: format!("Rendering layout as {}...", target_ext.to_uppercase()),
+    });
 
     // 3. Determine the expected output path.
     // LibreOffice always names the output: <source_stem>.<target_ext>

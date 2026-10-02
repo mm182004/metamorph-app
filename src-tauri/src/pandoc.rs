@@ -106,7 +106,15 @@ pub async fn run_pandoc(
     source_ext: &str,
     target_ext: &str,
     output_dir: &str,
+    app_handle: &tauri::AppHandle,
 ) -> Result<String, String> {
+    use tauri::Emitter;
+
+    let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+        percentage: 10.0,
+        message: "Starting Pandoc engine...".to_string(),
+    });
+
     // 1. Locate Pandoc
     let pandoc_bin = find_pandoc()
         .ok_or_else(|| "Pandoc not found. Please install Pandoc (pandoc.org).".to_string())?;
@@ -116,6 +124,11 @@ pub async fn run_pandoc(
         .ok_or_else(|| format!("Pandoc does not support reading format: {}", source_ext))?;
     let to_fmt = pandoc_to_format(target_ext)
         .ok_or_else(|| format!("Pandoc does not support writing format: {}", target_ext))?;
+
+    let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+        percentage: 50.0,
+        message: format!("Compiling structural document layout to {}...", target_ext.to_uppercase()),
+    });
 
     // 3. Build output path
     let source_stem = Path::new(source_path)

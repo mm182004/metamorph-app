@@ -16,6 +16,20 @@ use serde::Serialize;
 use formats::FileFormat;
 use registry::{get_conversion_targets, ConversionTarget};
 
+// ─── Phase 8: Structured Progress Events ────────────────────────────────────
+
+/// The payload sent to the frontend for real-time progress updates.
+///
+/// CONCEPT: Structured Events
+/// Instead of just sending a raw number (like `50.0`), we send a JSON object.
+/// This allows the UI to show both a progress bar and a descriptive message
+/// like "Rendering PDF..." or "Encoding audio...".
+#[derive(Clone, Serialize)]
+pub struct ProgressPayload {
+    pub percentage: f64,
+    pub message: String,
+}
+
 // ─── Tauri Commands ─────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -121,7 +135,7 @@ async fn convert_file(
     match target.engine {
         Engine::ImageCrate => {
             let engine = ImageCrateEngine;
-            engine.convert(&source_path, &target_ext, &output_dir)
+            engine.convert(&source_path, &target_ext, &output_dir, &app_handle)
         },
         Engine::Ffmpeg => {
             // Phase 6: Async FFmpeg subprocess with progress streaming.
@@ -142,6 +156,7 @@ async fn convert_file(
                 &source_path,
                 &target_ext,
                 &output_dir,
+                &app_handle,
             ).await
         },
         Engine::Pandoc => {
@@ -152,6 +167,7 @@ async fn convert_file(
                 &source_ext,
                 &target_ext,
                 &output_dir,
+                &app_handle,
             ).await
         },
     }

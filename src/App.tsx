@@ -200,14 +200,17 @@ export function App() {
     setProgress(0);
     setStatusMessage(`Converting to ${targetFormat.toUpperCase()}...`);
 
-    // Subscribe to real-time progress events from Rust (FFmpeg conversions).
-    // `listen()` returns an `unlisten` function we call when done to avoid leaks.
-    // For image conversions this won't fire (they complete instantly), but it's
-    // harmless to have the listener in place for all conversions.
-    const unlisten = await listen<number>("conversion-progress", (event) => {
-      const pct = Math.round(event.payload);
-      setProgress(pct);
-      setStatusMessage(`Converting... ${pct}%`);
+    // Subscribe to real-time progress events from Rust.
+    // The payload now contains both a percentage and a descriptive message.
+    interface ProgressPayload {
+      percentage: number;
+      message: string;
+    }
+
+    const unlisten = await listen<ProgressPayload>("conversion-progress", (event) => {
+      const { percentage, message } = event.payload;
+      setProgress(Math.round(percentage));
+      setStatusMessage(message);
     });
 
     try {
