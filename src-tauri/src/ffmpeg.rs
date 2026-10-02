@@ -172,9 +172,14 @@ pub async fn run_ffmpeg(
     target_ext: &str,
     output_dir: &str,
     app_handle: &tauri::AppHandle,
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<String, String> {
     // 1. Probe total duration so we can calculate percentages.
     let total_us = probe_duration(ffprobe_path, source_path).await?;
+
+    if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Conversion cancelled by user".to_string());
+    }
 
     // 2. Build the output file path.
     let source_name = Path::new(source_path)
@@ -199,36 +204,54 @@ pub async fn run_ffmpeg(
         .map_err(|e| format!("Failed to start FFmpeg: {}", e))?;
 
     // 4. Take ownership of the stderr pipe.
-    // CONCEPT: `.take()` and Option
-    // `child.stderr` is an `Option<ChildStderr>`.  `.take()` moves the value
-    // out and replaces it with `None`, giving us exclusive ownership of the
-    // pipe while letting `child` continue running.
     let stderr = child.stderr.take()
         .ok_or_else(|| "Failed to capture FFmpeg stderr".to_string())?;
 
     // 5. Wrap the raw pipe in a buffered, async line reader.
-    // CONCEPT: BufReader
-    // Reading a byte at a time from a pipe is slow. `BufReader` batches
-    // reads into a buffer.  `AsyncBufReadExt::read_line()` then lets us
-    // process the stream one line at a time without blocking.
     let mut reader = BufReader::new(stderr).lines();
     let mut progress = FfmpegProgress::new(total_us);
 
-    // 6. Read lines from stderr as they arrive.
-    while let Ok(Some(line)) = reader.next_line().await {
-        if let Some(pct) = progress.parse_line(&line) {
-            // CONCEPT: Tauri emit()
-            // Push the percentage to the frontend in real-time.
-            let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
-                percentage: pct,
-                message: format!("Processing audio/video... {:.1}%", pct),
-            });
+    // 6. Read lines from stderr as they arrive with periodic cancellation checks.
+    loop {
+        if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = child.kill().await;
+            if Path::new(&output_str).exists() {
+                let _ = std::fs::remove_file(&output_str);
+            }
+            return Err("Conversion cancelled by user".to_string());
+        }
+
+        tokio::select! {
+            line_result = reader.next_line() => {
+                match line_result {
+                    Ok(Some(line)) => {
+                        if let Some(pct) = progress.parse_line(&line) {
+                            let _ = app_handle.emit("conversion-progress", crate::ProgressPayload {
+                                percentage: pct,
+                                message: format!("Processing audio/video... {:.1}%", pct),
+                            });
+                        }
+                    }
+                    Ok(None) => break, // EOF reached
+                    Err(e) => return Err(format!("Error reading FFmpeg stderr: {}", e)),
+                }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
+                continue;
+            }
         }
     }
 
     // 7. Wait for FFmpeg to fully exit and check the exit code.
     let status = child.wait().await
         .map_err(|e| format!("Failed to wait for FFmpeg: {}", e))?;
+
+    if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+        if Path::new(&output_str).exists() {
+            let _ = std::fs::remove_file(&output_str);
+        }
+        return Err("Conversion cancelled by user".to_string());
+    }
 
     if !status.success() {
         return Err(format!(

@@ -100,21 +100,32 @@ fn get_targets(source_ext: &str) -> Vec<ConversionTarget> {
         .unwrap_or_default()
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::State;
+
+pub struct CancellationState(pub Arc<AtomicBool>);
+
+#[tauri::command]
+fn cancel_conversion(state: State<'_, CancellationState>) {
+    state.0.store(true, Ordering::SeqCst);
+}
+
 // ─── Phase 5 & 6: Conversion Execution ──────────────────────────────────────
 
 /// Executes the conversion by looking up the correct engine in the registry.
-///
-/// CONCEPT: Tauri's AppHandle
-/// When a `#[tauri::command]` function declares a parameter of type `tauri::AppHandle`,
-/// Tauri automatically injects it — you don't pass it from JavaScript.
-/// We need it here to `emit()` progress events to the frontend in real-time.
 #[tauri::command]
 async fn convert_file(
     app_handle: tauri::AppHandle,
+    cancel_state: State<'_, CancellationState>,
     source_path: String,
     source_ext: String,
     target_ext: String,
 ) -> Result<String, String> {
+    // Reset cancellation flag at the start of conversion
+    cancel_state.0.store(false, Ordering::SeqCst);
+    let cancel_flag = cancel_state.0.clone();
+
     // 1. Find the target engine from our registry
     let source_fmt = FileFormat::from_extension(&source_ext)
         .ok_or_else(|| format!("Unknown source format: {}", source_ext))?;
@@ -129,6 +140,10 @@ async fn convert_file(
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "".to_string());
+
+    if cancel_flag.load(Ordering::SeqCst) {
+        return Err("Conversion cancelled by user".to_string());
+    }
 
     // 3. Dispatch to the right engine based on the registry's tag
     use crate::engines::{ConversionEngine, Engine, ImageCrateEngine};
@@ -152,6 +167,7 @@ async fn convert_file(
                 &target_ext,
                 &output_dir,
                 &app_handle,
+                cancel_flag,
             ).await
         },
         Engine::LibreOffice => {
@@ -163,9 +179,6 @@ async fn convert_file(
             ).await
         },
         Engine::Pandoc => {
-            // Pandoc resolves its own binary internally in `run_pandoc`, 
-            // but we should probably update pandoc.rs to use setup::resolve_binary too.
-            // For now, pandoc.rs uses `find_pandoc`. Let's just call it.
             crate::pandoc::run_pandoc(
                 &source_path,
                 &source_ext,
@@ -181,7 +194,10 @@ async fn convert_file(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let cancel_state = CancellationState(Arc::new(AtomicBool::new(false)));
+
     tauri::Builder::default()
+        .manage(cancel_state)
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
@@ -190,6 +206,7 @@ pub fn run() {
             detect_file_type,
             get_targets,
             convert_file,
+            cancel_conversion,
             crate::setup::check_dependencies,
             crate::setup::install_dependencies,
         ])
