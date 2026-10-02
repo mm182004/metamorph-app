@@ -45,7 +45,7 @@ fn get_app_info() -> AppInfo {
     AppInfo {
         name: "MetaMorph".to_string(),
         version: "0.1.0".to_string(),
-        status: "Native Rust Engine Ready".to_string(),
+        status: "Engine Ready".to_string(),
     }
 }
 

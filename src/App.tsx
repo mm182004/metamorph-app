@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 interface AppInfo {
@@ -63,6 +63,7 @@ export function App() {
   const [masterFormat, setMasterFormat] = useState("");
   const [isConverting, setIsConverting] = useState(false);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   // Phase 9: Setup State
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -76,10 +77,14 @@ export function App() {
   const stopBatchRef = useRef(false);
   const masterFormatRef = useRef("");
   const processingPathsRef = useRef<Set<string>>(new Set());
+  const isConvertingRef = useRef(false);
+  const showHelpRef = useRef(false);
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   activeFileIdRef.current = activeFileId;
   masterFormatRef.current = masterFormat;
+  isConvertingRef.current = isConverting;
+  showHelpRef.current = showHelp;
 
   // 1. Fetch backend status and check dependencies on startup
   useEffect(() => {
@@ -155,15 +160,65 @@ export function App() {
     };
   }, []); // Run only once on mount
 
+  // 3. Global keyboard shortcuts (Ctrl+O, Ctrl+Enter, Esc, ?)
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const isInput = targetTag === "input" || targetTag === "select" || targetTag === "textarea";
+
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+      // Ctrl+O / Cmd+O: Browse files
+      if (modKey && (e.key === "o" || e.key === "O")) {
+        e.preventDefault();
+        fileInputRef.current?.click();
+        return;
+      }
+
+      // Ctrl+Enter / Cmd+Enter: Start conversion
+      if (modKey && e.key === "Enter") {
+        e.preventDefault();
+        if (!isConvertingRef.current) {
+          const convertBtn = document.querySelector<HTMLButtonElement>(".convert-btn:not(:disabled)");
+          convertBtn?.click();
+        }
+        return;
+      }
+
+      // Escape: Close help modal if open, otherwise cancel active conversion
+      if (e.key === "Escape") {
+        if (showHelpRef.current) {
+          e.preventDefault();
+          setShowHelp(false);
+          return;
+        }
+        if (isConvertingRef.current) {
+          e.preventDefault();
+          const cancelBtn = document.querySelector<HTMLButtonElement>(".batch-actions .btn-action-cancel");
+          cancelBtn?.click();
+          return;
+        }
+      }
+
+      // ?: Toggle shortcuts & help guide
+      if (!isInput && e.key === "?" && !modKey) {
+        e.preventDefault();
+        setShowHelp((prev) => !prev);
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
   // Add multiple file paths to the queue with strict deduplication
   async function addFiles(fileList: { path: string; size?: number }[]) {
-    // Filter out paths that are already in flight or already in queue
     const toAdd = fileList.filter(
       (file) => !processingPathsRef.current.has(file.path)
     );
     if (toAdd.length === 0) return;
 
-    // Mark as in-flight
     toAdd.forEach((f) => processingPathsRef.current.add(f.path));
 
     try {
@@ -216,7 +271,6 @@ export function App() {
         })
       );
 
-      // Functional updater with deduplication against current state
       setFiles((prev) => {
         const existingPaths = new Set(prev.map((f) => f.path));
         const unique = newItems.filter((item) => !existingPaths.has(item.path));
@@ -239,7 +293,6 @@ export function App() {
   }
 
   function onHtmlDrop(e: React.DragEvent) {
-    // Prevent the webview browser from trying to open/navigate to the dropped file
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
@@ -252,12 +305,10 @@ export function App() {
         size: f.size,
       }));
       addFiles(selected);
-      // Reset input value so same files can be re-selected if removed
       e.target.value = "";
     }
   }
 
-  // Master format change: updates masterFormat and updates any pending file that supports it
   function handleMasterFormatChange(newFormat: string) {
     setMasterFormat(newFormat);
     if (!newFormat) return;
@@ -288,6 +339,10 @@ export function App() {
     setMasterFormat("");
   }
 
+  function handleClearCompleted() {
+    setFiles((prev) => prev.filter((f) => f.status !== "done"));
+  }
+
   function handleRetryFile(id: string) {
     setFiles((prev) =>
       prev.map((f) =>
@@ -304,7 +359,6 @@ export function App() {
     );
   }
 
-  // Cancel conversion for a specific file
   async function handleCancelFile(item: QueueItem) {
     if (item.id === activeFileId) {
       try {
@@ -319,7 +373,6 @@ export function App() {
     }
   }
 
-  // Cancel all pending and current conversions
   async function handleStopAll() {
     stopBatchRef.current = true;
     if (activeFileId) {
@@ -334,7 +387,6 @@ export function App() {
     );
   }
 
-  // Execute batch conversion sequentially
   async function handleConvertBatch() {
     const toProcess = files.filter(
       (f) => f.status === "pending" || f.status === "error" || f.status === "cancelled"
@@ -344,7 +396,6 @@ export function App() {
     setIsConverting(true);
     stopBatchRef.current = false;
 
-    // Listen to real-time progress events from Rust
     const unlisten = await listen<{ percentage: number; message: string }>(
       "conversion-progress",
       (event) => {
@@ -427,24 +478,26 @@ export function App() {
   }
 
   function formatSize(bytes?: number): string {
-    if (!bytes) return "Local file";
+    if (!bytes) return "";
     const kb = bytes / 1024;
     if (kb < 1024) return `${kb.toFixed(1)} KB`;
     return `${(kb / 1024).toFixed(1)} MB`;
   }
 
-  // Derive master format options (union of all formats across all pending files)
-  const masterFormatOptions = Array.from(
-    new Set(
-      files
-        .filter((f) => f.status === "pending" || f.status === "cancelled" || f.status === "error")
-        .flatMap((f) => f.availableTargets.map((t) => t.targetExt))
-    )
+  // Derive master format options with counts of applicable files
+  const pendingOrFailed = files.filter(
+    (f) => f.status === "pending" || f.status === "cancelled" || f.status === "error"
   );
+  const masterFormatOptions = Array.from(
+    new Set(pendingOrFailed.flatMap((f) => f.availableTargets.map((t) => t.targetExt)))
+  ).map((fmt) => {
+    const count = pendingOrFailed.filter((f) =>
+      f.availableTargets.some((t) => t.targetExt === fmt)
+    ).length;
+    return { fmt, count };
+  });
 
-  const pendingCount = files.filter(
-    (f) => f.status === "pending" || f.status === "error" || f.status === "cancelled"
-  ).length;
+  const pendingCount = pendingOrFailed.length;
   const completedCount = files.filter((f) => f.status === "done").length;
 
   return (
@@ -502,7 +555,7 @@ export function App() {
 
             {isSettingUp ? (
               <div className="setup-progress-container">
-                <div className="progress-track" style={{ height: "10px" }}>
+                <div className="progress-track" style={{ height: "10px" }} role="progressbar" aria-valuenow={setupProgress} aria-valuemin={0} aria-valuemax={100}>
                   <div className="progress-fill" style={{ width: `${setupProgress}%` }}></div>
                 </div>
                 <p style={{ marginTop: "10px", fontSize: "0.85rem" }}>{setupMessage}</p>
@@ -539,11 +592,97 @@ export function App() {
           </div>
         </div>
 
-        <div className="backend-status">
-          <span className={`status-dot ${appInfo ? "active" : ""}`} />
-          <span>{appInfo ? appInfo.status : "Engine Ready"}</span>
+        <div className="header-actions">
+          <div className="backend-status">
+            <span className={`status-dot ${appInfo ? "active" : ""}`} />
+            <span>{appInfo ? appInfo.status : "Engine Ready"}</span>
+          </div>
+          <button
+            className="help-btn"
+            onClick={() => setShowHelp(true)}
+            title="Keyboard Shortcuts & Format Guide (Press ?)"
+            aria-label="Open shortcuts and help"
+          >
+            ?
+          </button>
         </div>
       </header>
+
+      {/* Keyboard Shortcuts & Help Modal */}
+      {showHelp && (
+        <div
+          className="help-modal-overlay"
+          onClick={() => setShowHelp(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="help-title"
+        >
+          <div className="help-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="help-modal-header">
+              <h2 id="help-title">Shortcuts & Info</h2>
+              <button
+                className="remove-btn"
+                onClick={() => setShowHelp(false)}
+                aria-label="Close help modal"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="help-section">
+              <span className="help-section-title">Keyboard Shortcuts</span>
+              <div className="shortcuts-table">
+                <div className="shortcut-row">
+                  <span>Browse & Add Files</span>
+                  <kbd className="kbd-badge">Ctrl + O</kbd>
+                </div>
+                <div className="shortcut-row">
+                  <span>Start Batch Conversion</span>
+                  <kbd className="kbd-badge">Ctrl + Enter</kbd>
+                </div>
+                <div className="shortcut-row">
+                  <span>Cancel Active / Dismiss Dialog</span>
+                  <kbd className="kbd-badge">Esc</kbd>
+                </div>
+                <div className="shortcut-row">
+                  <span>Toggle Shortcuts & Guide</span>
+                  <kbd className="kbd-badge">?</kbd>
+                </div>
+              </div>
+            </div>
+
+            <div className="help-section">
+              <span className="help-section-title">Supported Formats & Local Engines</span>
+              <div className="format-guide-grid">
+                <div className="format-guide-item">
+                  <h4>Images</h4>
+                  <p>PNG, JPG, WEBP, GIF, BMP, ICO — native Rust image engine.</p>
+                </div>
+                <div className="format-guide-item">
+                  <h4>Audio & Video</h4>
+                  <p>MP4, MKV, MOV, WEBM, MP3, WAV, FLAC, M4A, OGG — portable FFmpeg.</p>
+                </div>
+                <div className="format-guide-item">
+                  <h4>Documents</h4>
+                  <p>PDF, DOCX, ODT, MD, HTML, TXT — Pandoc & LibreOffice.</p>
+                </div>
+                <div className="format-guide-item">
+                  <h4>Batch Controls</h4>
+                  <p>Set a master format on top or customize format per card.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="privacy-banner">
+              <span>🔒</span>
+              <span>
+                <strong>100% Private & Offline:</strong> All conversions execute on your local CPU/GPU. Zero telemetry, no cloud servers, zero data leakage.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Workspace */}
       <main className="workspace">
@@ -551,7 +690,16 @@ export function App() {
         {files.length === 0 ? (
           <div
             className={`dropzone-container ${isDragging ? "active" : ""}`}
+            tabIndex={0}
+            role="button"
+            aria-label="Drop files to convert or press Enter to browse files"
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
           >
             <div className="dropzone-icon">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -570,7 +718,16 @@ export function App() {
         ) : (
           <div
             className={`dropzone-container compact ${isDragging ? "active" : ""}`}
+            tabIndex={0}
+            role="button"
+            aria-label="Drop more files here or press Enter to browse files"
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
             title="Click or drop to add more files to queue"
           >
             <div className="dropzone-icon">
@@ -605,13 +762,38 @@ export function App() {
                     onChange={(e) => handleMasterFormatChange(e.target.value)}
                   >
                     <option value="">Custom per file</option>
-                    {masterFormatOptions.map((fmt) => (
+                    {masterFormatOptions.map(({ fmt, count }) => (
                       <option key={fmt} value={fmt}>
-                        .{fmt.toUpperCase()}
+                        .{fmt.toUpperCase()} ({count} file{count !== 1 ? "s" : ""})
                       </option>
                     ))}
                   </select>
                 </div>
+              )}
+
+              {completedCount > 0 && (
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    const firstDone = files.find((f) => f.status === "done" && f.outputPath);
+                    if (firstDone?.outputPath) {
+                      revealItemInDir(firstDone.outputPath);
+                    }
+                  }}
+                  title="Open output directory in File Explorer"
+                >
+                  Open Output Folder
+                </button>
+              )}
+
+              {completedCount > 0 && files.length > completedCount && !isConverting && (
+                <button
+                  className="btn-secondary"
+                  onClick={handleClearCompleted}
+                  title="Remove finished files from queue"
+                >
+                  Clear Done
+                </button>
               )}
 
               {isConverting ? (
@@ -646,6 +828,8 @@ export function App() {
           <div className="queue-scroll">
             {files.map((item) => {
               const isActive = item.id === activeFileId;
+              const sizeLabel = formatSize(item.size);
+
               return (
                 <div
                   key={item.id}
@@ -659,7 +843,7 @@ export function App() {
                           {item.name}
                         </div>
                         <div className="file-meta" title={item.path}>
-                          {formatSize(item.size)} · {item.path}
+                          {sizeLabel ? `${sizeLabel} · ` : ""}{item.path}
                         </div>
                       </div>
                     </div>
@@ -672,6 +856,7 @@ export function App() {
                         value={item.targetFormat}
                         disabled={isConverting || item.status === "done" || item.availableTargets.length === 0}
                         onChange={(e) => handleItemFormatChange(item.id, e.target.value)}
+                        aria-label={`Target format for ${item.name}`}
                       >
                         {item.availableTargets.length === 0 ? (
                           <option value="">No formats</option>
@@ -689,8 +874,36 @@ export function App() {
                         {item.status === "converting" ? `${item.progress}%` : item.status}
                       </span>
 
-                      {/* Action Button: Cancel when converting, Retry when error/cancelled, Remove when pending */}
-                      {item.status === "converting" ? (
+                      {/* Action Buttons: Open & Reveal when done, Cancel when converting, Retry when error/cancelled, Remove when pending */}
+                      {item.status === "done" && item.outputPath ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <button
+                            className="btn-action-open"
+                            onClick={() => openPath(item.outputPath!)}
+                            title="Open converted file in default application"
+                          >
+                            Open
+                          </button>
+                          <button
+                            className="btn-action-reveal"
+                            onClick={() => revealItemInDir(item.outputPath!)}
+                            title="Reveal in File Explorer"
+                            aria-label={`Show ${item.name} in folder`}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                            </svg>
+                          </button>
+                          <button
+                            className="remove-btn"
+                            onClick={() => handleRemoveFile(item.id)}
+                            aria-label={`Remove ${item.name} from list`}
+                            title="Remove from list"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : item.status === "converting" ? (
                         <button
                           className="btn-action-cancel"
                           onClick={() => handleCancelFile(item)}
@@ -710,6 +923,7 @@ export function App() {
                           <button
                             className="remove-btn"
                             onClick={() => handleRemoveFile(item.id)}
+                            aria-label={`Remove ${item.name} from queue`}
                             title="Remove from queue"
                           >
                             ✕
@@ -718,8 +932,8 @@ export function App() {
                       ) : (
                         <button
                           className="remove-btn"
-                          disabled={isConverting}
                           onClick={() => handleRemoveFile(item.id)}
+                          aria-label={`Remove ${item.name} from queue`}
                           title="Remove from queue"
                         >
                           ✕
@@ -735,7 +949,13 @@ export function App() {
                         <span>{item.progressMessage}</span>
                         <span>{item.progress}%</span>
                       </div>
-                      <div className="item-progress-track">
+                      <div
+                        className="item-progress-track"
+                        role="progressbar"
+                        aria-valuenow={item.progress}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
                         <div className="item-progress-fill" style={{ width: `${item.progress}%` }}></div>
                       </div>
                     </div>
@@ -743,14 +963,24 @@ export function App() {
 
                   {/* Status/Error note for completed, error, or cancelled */}
                   {item.status === "done" && item.outputPath && (
-                    <div style={{ fontSize: "0.76rem", color: "var(--success)", textAlign: "left" }}>
+                    <div
+                      style={{
+                        fontSize: "0.76rem",
+                        color: "var(--success)",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                      }}
+                      onClick={() => revealItemInDir(item.outputPath!)}
+                      title="Click to reveal in folder"
+                    >
                       Saved to: {item.outputPath}
                     </div>
                   )}
 
                   {item.status === "error" && (
                     <div style={{ fontSize: "0.76rem", color: "var(--danger)", textAlign: "left" }}>
-                      {item.progressMessage}
+                      {item.error || item.progressMessage} · Check format compatibility or click Retry
                     </div>
                   )}
                 </div>
