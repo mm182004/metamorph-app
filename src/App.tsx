@@ -22,13 +22,27 @@ interface DroppedFile {
   extension: string;
 }
 
+// Mirror of the Rust `ConversionTarget` struct from registry.rs.
+// The field names use snake_case to match Rust's JSON serialisation.
+interface ConversionTarget {
+  // Rust's serde serialises unit enum variants (no data) as plain JSON strings by default.
+  // e.g. FileFormat::Png → "Png",  Engine::ImageCrate → "ImageCrate"
+  format: string;
+  engine: string;
+  available: boolean;
+  // Helpers we derive when parsing
+  targetExt?: string;
+  engineName?: string;
+}
+
 export function App() {
   // State management
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<DroppedFile | null>(null);
   const [targetFormat, setTargetFormat] = useState("");
-  const [availableFormats, setAvailableFormats] = useState<string[]>([]);
+  // Now holds full ConversionTarget objects from the Rust registry
+  const [availableTargets, setAvailableTargets] = useState<ConversionTarget[]>([]);
   const [progress, setProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState("Ready — drag and drop a file to begin");
   const [isConverting, setIsConverting] = useState(false);
@@ -89,63 +103,50 @@ export function App() {
     const name = normalized.split("/").pop() || fullPath;
 
     // Show temporary loading state
-    setSelectedFile({
-      name,
-      path: fullPath,
-      size,
-      extension: "...",
-    });
+    setSelectedFile({ name, path: fullPath, size, extension: "..." });
     setStatusMessage("Detecting true file type using magic bytes...");
 
     try {
-      // CONCEPT: Error Handling in JavaScript for Tauri Results
-      // A Rust `Ok(value)` resolves the Promise. A Rust `Err(value)` rejects it.
-      // We wrap the invoke in a try-catch to catch any `Err` sent from Rust.
+      // Step 1: Ask Rust to identify the real format from magic bytes.
       const detectedExt = await invoke<string>("detect_file_type", { path: fullPath });
-      
-      setSelectedFile({
-        name,
-        path: fullPath,
-        size,
-        extension: detectedExt,
+
+      setSelectedFile({ name, path: fullPath, size, extension: detectedExt });
+
+      // Step 2: Ask the Rust conversion registry for the list of valid targets.
+      // This returns ConversionTarget[] — a richer structure than plain strings.
+      const rawTargets = await invoke<ConversionTarget[]>("get_targets", { sourceExt: detectedExt });
+
+      // Step 3: Derive human-readable extensions from Rust enum variant names.
+      // Most variant names lowercase directly to the extension (e.g. "Png" → "png"),
+      // but a few differ and need an explicit mapping.
+      const variantToExt: Record<string, string> = {
+        jpeg: "jpg",
+        webp: "webp",
+        markdown: "md",
+        m4a: "m4a",
+        flac: "flac",
+        webm: "webm",
+      };
+      const targets = rawTargets.map((t) => {
+        const lower = t.format.toLowerCase();
+        return {
+          ...t,
+          targetExt: variantToExt[lower] ?? lower,
+          engineName: t.engine,
+        };
       });
 
-      // Provide initial candidate formats based on the *real* detected extension
-      const candidates = getCandidateFormats(detectedExt);
-      setAvailableFormats(candidates);
-      setTargetFormat(candidates.length > 0 ? candidates[0] : "");
+      setAvailableTargets(targets);
+      setTargetFormat(targets.length > 0 ? targets[0].targetExt! : "");
       setProgress(0);
-      setStatusMessage(`Detected as .${detectedExt}. Choose target format.`);
+      setStatusMessage(`Detected as .${detectedExt} — ${targets.length} target format(s) available.`);
     } catch (error) {
       console.error("File detection failed:", error);
-      setSelectedFile({
-        name,
-        path: fullPath,
-        size,
-        extension: "Unknown",
-      });
-      setAvailableFormats([]);
+      setSelectedFile({ name, path: fullPath, size, extension: "Unknown" });
+      setAvailableTargets([]);
       setTargetFormat("");
       setStatusMessage(`Error: ${error}`);
     }
-  }
-
-  // Helper: Candidate format suggestions for Phase 2 UI demonstration
-  function getCandidateFormats(ext: string): string[] {
-    const imageExts = ["jpg", "jpeg", "png", "webp", "gif", "bmp", "tiff"];
-    const videoAudioExts = ["mp4", "mkv", "mov", "avi", "mp3", "m4a", "wav", "flac"];
-    const docExts = ["docx", "pdf", "md", "html", "odt"];
-
-    if (imageExts.includes(ext)) {
-      return ["png", "jpg", "webp", "bmp", "tiff", "gif"].filter((f) => f !== ext);
-    }
-    if (videoAudioExts.includes(ext)) {
-      return ["mp4", "mkv", "mp3", "wav", "m4a"].filter((f) => f !== ext);
-    }
-    if (docExts.includes(ext)) {
-      return ["pdf", "docx", "md", "html"].filter((f) => f !== ext);
-    }
-    return ["png", "jpg", "pdf", "mp4"]; // Fallback candidates
   }
 
   // HTML5 Drag-and-drop fallback handlers
@@ -180,7 +181,7 @@ export function App() {
   // Clear selected file
   function handleClearFile() {
     setSelectedFile(null);
-    setAvailableFormats([]);
+    setAvailableTargets([]);
     setTargetFormat("");
     setProgress(0);
     setStatusMessage("Ready — drag and drop a file to begin");
@@ -321,17 +322,17 @@ export function App() {
               id="format-picker"
               className="format-select"
               value={targetFormat}
-              disabled={!selectedFile || availableFormats.length === 0 || isConverting}
+              disabled={!selectedFile || availableTargets.length === 0 || isConverting}
               onChange={(e) => setTargetFormat(e.target.value)}
             >
               {!selectedFile ? (
                 <option value="">Drop a file to reveal available formats...</option>
-              ) : availableFormats.length === 0 ? (
+              ) : availableTargets.length === 0 ? (
                 <option value="">No valid target formats available</option>
               ) : (
-                availableFormats.map((fmt) => (
-                  <option key={fmt} value={fmt}>
-                    Convert to .{fmt.toUpperCase()}
+                availableTargets.map((t) => (
+                  <option key={t.targetExt} value={t.targetExt}>
+                    .{t.targetExt!.toUpperCase()} — via {t.engineName}
                   </option>
                 ))
               )}
