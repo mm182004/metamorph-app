@@ -27,7 +27,7 @@ use std::process::Command;
 /// LibreOffice ships as `soffice` on macOS/Linux and `soffice.exe` on
 /// Windows. We try `soffice` first (works on all platforms), then a
 /// common Windows install path as a fallback.
-fn find_libreoffice() -> Option<String> {
+pub fn find_libreoffice() -> Option<String> {
     // Try the standard `soffice` command on PATH first
     if Command::new("soffice").arg("--version").output().is_ok() {
         return Some("soffice".to_string());

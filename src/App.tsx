@@ -12,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 // Desktop apps need real filesystem paths (e.g. "C:\Users\...\file.png"), which browsers hide for security.
 // Tauri's webview module emits native drag-and-drop events containing real disk paths.
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 interface AppInfo {
@@ -52,21 +53,58 @@ export function App() {
   const [statusMessage, setStatusMessage] = useState("Ready — drag and drop a file to begin");
   const [isConverting, setIsConverting] = useState(false);
 
+  // Phase 9: Setup State
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [needsLibreOffice, setNeedsLibreOffice] = useState(false);
+  const [setupProgress, setSetupProgress] = useState(0);
+  const [setupMessage, setSetupMessage] = useState("");
+  const [isSettingUp, setIsSettingUp] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 1. Fetch backend status from Rust on startup via invoke()
+  // 1. Fetch backend status and check dependencies on startup
   useEffect(() => {
     async function fetchBackendInfo() {
       try {
-        // Calls the Rust command `get_app_info()` defined in src-tauri/src/lib.rs
         const info = await invoke<AppInfo>("get_app_info");
         setAppInfo(info);
+
+        const status = await invoke<{ ffmpeg_ready: boolean; pandoc_ready: boolean; libreoffice_ready: boolean }>("check_dependencies");
+        if (!status.ffmpeg_ready || !status.pandoc_ready) {
+          setNeedsSetup(true);
+        }
+        if (!status.libreoffice_ready) {
+          setNeedsLibreOffice(true);
+          // Even if FFmpeg/Pandoc are ready, show the overlay just for the LibreOffice message
+          setNeedsSetup(true); 
+        }
       } catch (err) {
         console.error("Failed to connect to Rust backend:", err);
       }
     }
     fetchBackendInfo();
   }, []);
+
+  async function handleSetup() {
+    setIsSettingUp(true);
+    setSetupMessage("Initializing download...");
+
+    const unlisten = await listen<{percentage: number, message: string}>("setup-progress", (event) => {
+      setSetupProgress(event.payload.percentage);
+      setSetupMessage(event.payload.message);
+    });
+
+    try {
+      await invoke("install_dependencies");
+      setNeedsSetup(false);
+    } catch (err) {
+      console.error("Setup failed:", err);
+      setSetupMessage(`Error: ${err}`);
+    } finally {
+      unlisten();
+      setIsSettingUp(false);
+    }
+  }
 
   // 2. Set up Native Tauri Drag-and-Drop event listener
   useEffect(() => {
@@ -248,6 +286,56 @@ export function App() {
       onDragLeave={onHtmlDragLeave}
       onDrop={onHtmlDrop}
     >
+      {/* Phase 9: First-Run Setup Overlay */}
+      {needsSetup && (
+        <div className="setup-overlay">
+          <div className="setup-card">
+            <h2>Additional Setup Required</h2>
+            <p>MetaMorph needs FFmpeg and Pandoc to convert video, audio, and documents.</p>
+            <p className="setup-subtext">These will be downloaded privately to the app's local data folder. No system installation is required.</p>
+            
+            {needsLibreOffice && (
+              <div className="libreoffice-notice" style={{ marginTop: '20px', padding: '15px', backgroundColor: 'rgba(255, 165, 0, 0.1)', border: '1px solid orange', borderRadius: '8px' }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#ffb74d' }}>LibreOffice Missing</h3>
+                <p style={{ margin: '0', fontSize: '14px' }}>
+                  For advanced document conversions (like .docx to .pdf), LibreOffice is required. 
+                  Because it is a massive suite, we cannot auto-download it. Please <a href="#" onClick={(e) => { e.preventDefault(); openUrl("https://www.libreoffice.org/download/download-libreoffice/"); }} style={{ color: '#6366f1', textDecoration: 'underline', cursor: 'pointer' }}>install it manually</a>, then restart the app.
+                </p>
+                <button 
+                  className="secondary-btn" 
+                  style={{ marginTop: '12px', padding: '8px', fontSize: '14px' }}
+                  onClick={() => {
+                    setNeedsLibreOffice(false);
+                    // Hide the entire setup screen if FFmpeg and Pandoc are already installed
+                    invoke<{ ffmpeg_ready: boolean; pandoc_ready: boolean }>("check_dependencies")
+                      .then((status) => {
+                        if (status.ffmpeg_ready && status.pandoc_ready) {
+                          setNeedsSetup(false);
+                        }
+                      });
+                  }}
+                >
+                  I'll do it later
+                </button>
+              </div>
+            )}
+            
+            {isSettingUp ? (
+              <div className="setup-progress-container">
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${setupProgress}%` }}></div>
+                </div>
+                <p>{setupMessage}</p>
+              </div>
+            ) : (
+              <button className="primary-btn setup-btn" onClick={handleSetup}>
+                Download & Install Dependencies
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Hidden file input for click-to-browse */}
       <input
         type="file"

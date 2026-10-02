@@ -115,9 +115,9 @@ pub async fn run_pandoc(
         message: "Starting Pandoc engine...".to_string(),
     });
 
-    // 1. Locate Pandoc
-    let pandoc_bin = find_pandoc()
-        .ok_or_else(|| "Pandoc not found. Please install Pandoc (pandoc.org).".to_string())?;
+    // 1. Locate Pandoc securely
+    let pandoc_bin = crate::setup::resolve_binary(app_handle, "pandoc")
+        .ok_or_else(|| "Pandoc not found. Please run setup.".to_string())?;
 
     // 2. Look up format strings
     let from_fmt = pandoc_from_format(source_ext)

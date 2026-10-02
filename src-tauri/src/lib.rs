@@ -8,6 +8,7 @@ pub mod formats;
 pub mod libreoffice;
 pub mod pandoc;
 pub mod registry;
+pub mod setup;
 
 use serde::Serialize;
 
@@ -138,12 +139,15 @@ async fn convert_file(
             engine.convert(&source_path, &target_ext, &output_dir, &app_handle)
         },
         Engine::Ffmpeg => {
-            // Phase 6: Async FFmpeg subprocess with progress streaming.
-            // We try "ffmpeg" / "ffprobe" on PATH first.
-            // Phase 9 will add logic to check app_data_dir() for portable builds.
+            // Phase 6 & 9: Resolve the FFmpeg binaries securely
+            let ffmpeg_bin = crate::setup::resolve_binary(&app_handle, "ffmpeg")
+                .ok_or_else(|| "FFmpeg is not installed.".to_string())?;
+            let ffprobe_bin = crate::setup::resolve_binary(&app_handle, "ffprobe")
+                .ok_or_else(|| "FFprobe is not installed.".to_string())?;
+
             crate::ffmpeg::run_ffmpeg(
-                "ffmpeg",
-                "ffprobe",
+                &ffmpeg_bin,
+                &ffprobe_bin,
                 &source_path,
                 &target_ext,
                 &output_dir,
@@ -151,7 +155,6 @@ async fn convert_file(
             ).await
         },
         Engine::LibreOffice => {
-            // Phase 7: LibreOffice headless — best for rendered document fidelity
             crate::libreoffice::run_libreoffice(
                 &source_path,
                 &target_ext,
@@ -160,8 +163,9 @@ async fn convert_file(
             ).await
         },
         Engine::Pandoc => {
-            // Phase 7: Pandoc — best for text/markup structural conversions
-            // We pass source_ext so Pandoc knows which format it's reading FROM.
+            // Pandoc resolves its own binary internally in `run_pandoc`, 
+            // but we should probably update pandoc.rs to use setup::resolve_binary too.
+            // For now, pandoc.rs uses `find_pandoc`. Let's just call it.
             crate::pandoc::run_pandoc(
                 &source_path,
                 &source_ext,
@@ -186,6 +190,8 @@ pub fn run() {
             detect_file_type,
             get_targets,
             convert_file,
+            crate::setup::check_dependencies,
+            crate::setup::install_dependencies,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
