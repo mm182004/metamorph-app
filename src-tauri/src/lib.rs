@@ -3,6 +3,7 @@
 // if you declare them here with `mod`. Think of this as "registering" each file
 // as part of the project.
 pub mod engines;
+pub mod ffmpeg;
 pub mod formats;
 pub mod registry;
 
@@ -82,11 +83,17 @@ fn get_targets(source_ext: &str) -> Vec<ConversionTarget> {
         .unwrap_or_default()
 }
 
-// ─── Phase 5: Conversion Execution ──────────────────────────────────────────
+// ─── Phase 5 & 6: Conversion Execution ──────────────────────────────────────
 
 /// Executes the conversion by looking up the correct engine in the registry.
+///
+/// CONCEPT: Tauri's AppHandle
+/// When a `#[tauri::command]` function declares a parameter of type `tauri::AppHandle`,
+/// Tauri automatically injects it — you don't pass it from JavaScript.
+/// We need it here to `emit()` progress events to the frontend in real-time.
 #[tauri::command]
 async fn convert_file(
+    app_handle: tauri::AppHandle,
     source_path: String,
     source_ext: String,
     target_ext: String,
@@ -114,7 +121,19 @@ async fn convert_file(
             let engine = ImageCrateEngine;
             engine.convert(&source_path, &target_ext, &output_dir)
         },
-        Engine::Ffmpeg => Err("FFmpeg not yet implemented (Phase 6)".to_string()),
+        Engine::Ffmpeg => {
+            // Phase 6: Async FFmpeg subprocess with progress streaming.
+            // We try "ffmpeg" / "ffprobe" on PATH first.
+            // Phase 9 will add logic to check app_data_dir() for portable builds.
+            crate::ffmpeg::run_ffmpeg(
+                "ffmpeg",
+                "ffprobe",
+                &source_path,
+                &target_ext,
+                &output_dir,
+                &app_handle,
+            ).await
+        },
         Engine::LibreOffice => Err("LibreOffice not yet implemented (Phase 7)".to_string()),
         Engine::Pandoc => Err("Pandoc not yet implemented (Phase 7)".to_string()),
     }

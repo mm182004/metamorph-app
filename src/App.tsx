@@ -3,6 +3,11 @@ import { useState, useEffect, useRef } from "react";
 // `invoke` is an asynchronous function provided by Tauri that bridges the JavaScript frontend
 // to Rust functions annotated with `#[tauri::command]`. It returns a standard Promise.
 import { invoke } from "@tauri-apps/api/core";
+// CONCEPT: Tauri Event System (Push-based, not Polling)
+// `listen()` registers a callback that fires whenever the Rust backend calls
+// `app_handle.emit("event-name", payload)`.  This is how FFmpeg streams
+// progress percentages to the UI in real-time without us having to ask.
+import { listen } from "@tauri-apps/api/event";
 // CONCEPT: Native Desktop Webview Events
 // Desktop apps need real filesystem paths (e.g. "C:\Users\...\file.png"), which browsers hide for security.
 // Tauri's webview module emits native drag-and-drop events containing real disk paths.
@@ -192,13 +197,20 @@ export function App() {
     if (!selectedFile || !targetFormat) return;
 
     setIsConverting(true);
-    setProgress(15);
-    setStatusMessage(`Contacting Rust core for format: ${targetFormat.toUpperCase()}...`);
+    setProgress(0);
+    setStatusMessage(`Converting to ${targetFormat.toUpperCase()}...`);
+
+    // Subscribe to real-time progress events from Rust (FFmpeg conversions).
+    // `listen()` returns an `unlisten` function we call when done to avoid leaks.
+    // For image conversions this won't fire (they complete instantly), but it's
+    // harmless to have the listener in place for all conversions.
+    const unlisten = await listen<number>("conversion-progress", (event) => {
+      const pct = Math.round(event.payload);
+      setProgress(pct);
+      setStatusMessage(`Converting... ${pct}%`);
+    });
 
     try {
-      // Phase 5: Calling the real conversion engine.
-      // This will block the Rust side until the conversion finishes (for images).
-      // In Phase 8, we will learn how to stream real progress events back.
       const outputPath = await invoke<string>("convert_file", {
         sourcePath: selectedFile.path,
         sourceExt: selectedFile.extension,
@@ -212,6 +224,9 @@ export function App() {
       console.error("Conversion error:", err);
       setIsConverting(false);
       setStatusMessage(`Error: ${String(err)}`);
+    } finally {
+      // Always clean up the event listener, whether we succeeded or failed.
+      unlisten();
     }
   }
 
