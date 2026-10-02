@@ -39,6 +39,26 @@ fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+// CONCEPT: Result<T, E> Error Handling
+// Instead of crashing (panicking) when a file is unreadable or unknown, we return a `Result`.
+// `Result<String, String>` means: on success, return the extension as a `String` (the `Ok` variant).
+// On failure, return an error message as a `String` (the `Err` variant).
+// Tauri automatically converts `Ok` into a resolved Promise and `Err` into a rejected Promise in JavaScript.
+#[tauri::command]
+fn detect_file_type(path: &str) -> Result<String, String> {
+    // `infer::get_from_path` reads the first few bytes (magic bytes) of the file safely.
+    // We use the `match` control flow operator to handle the outcome explicitly.
+    match infer::get_from_path(path) {
+        // If it successfully read the file and found a match:
+        Ok(Some(kind)) => Ok(kind.extension().to_string()),
+        // If it read the file but didn't recognize the magic bytes:
+        Ok(None) => Err("Unknown file format".to_string()),
+        // If reading the file from disk failed (e.g., permissions issue or file deleted):
+        // `e` is the std::io::Error. We use `.to_string()` to send the error text to the frontend.
+        Err(e) => Err(format!("Failed to read file: {}", e)),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // CONCEPT: Builder Pattern
@@ -49,7 +69,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             ping_engine,
-            greet
+            greet,
+            detect_file_type
         ])
         .run(tauri::generate_context!())
         // CONCEPT: Result Handling

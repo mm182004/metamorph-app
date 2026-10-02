@@ -83,27 +83,51 @@ export function App() {
   }, []);
 
   // Process a selected file path (from native drop or file input)
-  function handleFilePath(fullPath: string, size?: number) {
-    // Extract file name and extension from path
+  async function handleFilePath(fullPath: string, size?: number) {
+    // Extract file name
     const normalized = fullPath.replace(/\\/g, "/");
     const name = normalized.split("/").pop() || fullPath;
-    const parts = name.split(".");
-    const ext = parts.length > 1 ? parts.pop()!.toLowerCase() : "";
 
+    // Show temporary loading state
     setSelectedFile({
       name,
       path: fullPath,
       size,
-      extension: ext,
+      extension: "...",
     });
+    setStatusMessage("Detecting true file type using magic bytes...");
 
-    // Provide initial candidate formats based on source extension
-    // (In Phase 3 & 4, Rust will provide this via real magic-byte detection)
-    const candidates = getCandidateFormats(ext);
-    setAvailableFormats(candidates);
-    setTargetFormat(candidates.length > 0 ? candidates[0] : "");
-    setProgress(0);
-    setStatusMessage(`Loaded "${name}". Choose target format.`);
+    try {
+      // CONCEPT: Error Handling in JavaScript for Tauri Results
+      // A Rust `Ok(value)` resolves the Promise. A Rust `Err(value)` rejects it.
+      // We wrap the invoke in a try-catch to catch any `Err` sent from Rust.
+      const detectedExt = await invoke<string>("detect_file_type", { path: fullPath });
+      
+      setSelectedFile({
+        name,
+        path: fullPath,
+        size,
+        extension: detectedExt,
+      });
+
+      // Provide initial candidate formats based on the *real* detected extension
+      const candidates = getCandidateFormats(detectedExt);
+      setAvailableFormats(candidates);
+      setTargetFormat(candidates.length > 0 ? candidates[0] : "");
+      setProgress(0);
+      setStatusMessage(`Detected as .${detectedExt}. Choose target format.`);
+    } catch (error) {
+      console.error("File detection failed:", error);
+      setSelectedFile({
+        name,
+        path: fullPath,
+        size,
+        extension: "Unknown",
+      });
+      setAvailableFormats([]);
+      setTargetFormat("");
+      setStatusMessage(`Error: ${error}`);
+    }
   }
 
   // Helper: Candidate format suggestions for Phase 2 UI demonstration
