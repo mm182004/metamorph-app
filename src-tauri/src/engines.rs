@@ -75,3 +75,58 @@ pub trait ConversionEngine {
         output_dir: &str,
     ) -> Result<String, String>;
 }
+
+// ============================================================
+// Phase 5: Image Crate Engine Implementation
+// ============================================================
+
+/// Engine that uses the pure-Rust `image` crate. No external binaries needed.
+pub struct ImageCrateEngine;
+
+impl ConversionEngine for ImageCrateEngine {
+    fn convert(
+        &self,
+        source_path: &str,
+        target_format: &str,
+        output_dir: &str,
+    ) -> Result<String, String> {
+        use std::path::Path;
+        use image::ImageFormat;
+
+        // 1. Map the target string ("png", "jpg") to the image crate's format enum.
+        let output_format = match target_format.to_lowercase().as_str() {
+            "jpg" | "jpeg" => ImageFormat::Jpeg,
+            "png"          => ImageFormat::Png,
+            "webp"         => ImageFormat::WebP,
+            "gif"          => ImageFormat::Gif,
+            "bmp"          => ImageFormat::Bmp,
+            "tiff" | "tif" => ImageFormat::Tiff,
+            _ => return Err(format!("Unsupported target image format: {}", target_format)),
+        };
+
+        // 2. Construct the output file path.
+        // We extract the base name (e.g. "photo" from "photo.png")
+        let source_name = Path::new(source_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("converted");
+        
+        let output_filename = format!("{}.{}", source_name, target_format);
+        let output_path = Path::new(output_dir).join(output_filename);
+
+        // 3. Open and decode the source image into memory.
+        // CONCEPT: The `?` Operator
+        // The `?` at the end of a line means: "If this returned Ok(value), unwrap the value.
+        // If it returned Err, immediately exit this function and return the Err to the caller."
+        // We use `.map_err()` to transform `image::ImageError` into our `String` error type first.
+        let img = image::open(source_path)
+            .map_err(|e| format!("Failed to open image: {}", e))?;
+
+        // 4. Encode and save the image to the target path.
+        img.save_with_format(&output_path, output_format)
+            .map_err(|e| format!("Failed to save image: {}", e))?;
+
+        // 5. Success! Return the final absolute path.
+        Ok(output_path.to_string_lossy().to_string())
+    }
+}

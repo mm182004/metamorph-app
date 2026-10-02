@@ -82,6 +82,44 @@ fn get_targets(source_ext: &str) -> Vec<ConversionTarget> {
         .unwrap_or_default()
 }
 
+// ─── Phase 5: Conversion Execution ──────────────────────────────────────────
+
+/// Executes the conversion by looking up the correct engine in the registry.
+#[tauri::command]
+async fn convert_file(
+    source_path: String,
+    source_ext: String,
+    target_ext: String,
+) -> Result<String, String> {
+    // 1. Find the target engine from our registry
+    let source_fmt = FileFormat::from_extension(&source_ext)
+        .ok_or_else(|| format!("Unknown source format: {}", source_ext))?;
+    
+    let targets = get_conversion_targets(&source_fmt);
+    let target = targets.iter()
+        .find(|t| t.format.extension() == target_ext)
+        .ok_or_else(|| format!("Conversion from {} to {} not supported", source_ext, target_ext))?;
+
+    // 2. Determine the output directory (same as source for now)
+    let output_dir = std::path::Path::new(&source_path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "".to_string());
+
+    // 3. Dispatch to the right engine based on the registry's tag
+    use crate::engines::{ConversionEngine, Engine, ImageCrateEngine};
+    
+    match target.engine {
+        Engine::ImageCrate => {
+            let engine = ImageCrateEngine;
+            engine.convert(&source_path, &target_ext, &output_dir)
+        },
+        Engine::Ffmpeg => Err("FFmpeg not yet implemented (Phase 6)".to_string()),
+        Engine::LibreOffice => Err("LibreOffice not yet implemented (Phase 7)".to_string()),
+        Engine::Pandoc => Err("Pandoc not yet implemented (Phase 7)".to_string()),
+    }
+}
+
 // ─── Tauri Entry Point ───────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -94,6 +132,7 @@ pub fn run() {
             greet,
             detect_file_type,
             get_targets,
+            convert_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

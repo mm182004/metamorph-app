@@ -196,26 +196,18 @@ export function App() {
     setStatusMessage(`Contacting Rust core for format: ${targetFormat.toUpperCase()}...`);
 
     try {
-      // CONCEPT: Passing arguments with invoke()
-      // Tauri serializes the object `{ targetFormat }` to JSON and matches Rust's parameter name `target_format` (camelCase -> snake_case conversion is automatic)
-      const ack = await invoke<string>("ping_engine", { targetFormat });
-      setStatusMessage(ack);
+      // Phase 5: Calling the real conversion engine.
+      // This will block the Rust side until the conversion finishes (for images).
+      // In Phase 8, we will learn how to stream real progress events back.
+      const outputPath = await invoke<string>("convert_file", {
+        sourcePath: selectedFile.path,
+        sourceExt: selectedFile.extension,
+        targetExt: targetFormat,
+      });
 
-      // Placeholder progress simulation for Phase 2 UI demonstration
-      // (Replaced by real-time FFmpeg/engine events in Phase 8)
-      let p = 20;
-      const interval = setInterval(() => {
-        p += 25;
-        if (p >= 100) {
-          clearInterval(interval);
-          setProgress(100);
-          setIsConverting(false);
-          setStatusMessage(`Demonstration complete: target ready as .${targetFormat}`);
-        } else {
-          setProgress(p);
-          setStatusMessage(`Processing... ${p}%`);
-        }
-      }, 350);
+      setProgress(100);
+      setIsConverting(false);
+      setStatusMessage(`Success! Saved to: ${outputPath}`);
     } catch (err) {
       console.error("Conversion error:", err);
       setIsConverting(false);
