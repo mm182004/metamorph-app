@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "MetaMorph",
-        "width": 800,
-        "height": 600
+        "width": 860,
+        "height": 650,
+        "minWidth": 640,
+        "minHeight": 500
       }
     ],
     "security": {
