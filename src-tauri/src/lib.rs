@@ -49,10 +49,23 @@ fn detect_file_type(path: &str) -> Result<String, String> {
     // `infer::get_from_path` reads the first few bytes (magic bytes) of the file safely.
     // We use the `match` control flow operator to handle the outcome explicitly.
     match infer::get_from_path(path) {
-        // If it successfully read the file and found a match:
+        // If it successfully read the file and found a match (like images, videos, PDFs):
         Ok(Some(kind)) => Ok(kind.extension().to_string()),
         // If it read the file but didn't recognize the magic bytes:
-        Ok(None) => Err("Unknown file format".to_string()),
+        Ok(None) => {
+            // FALLBACK: Plain text files (.txt, .md, .html) do NOT have magic bytes.
+            // They are just raw characters. For these, we must fall back to checking the extension.
+            let ext = std::path::Path::new(path)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            
+            match ext.as_str() {
+                "txt" | "md" | "csv" | "html" | "json" => Ok(ext),
+                _ => Err("Unknown file format (no magic bytes found)".to_string())
+            }
+        },
         // If reading the file from disk failed (e.g., permissions issue or file deleted):
         // `e` is the std::io::Error. We use `.to_string()` to send the error text to the frontend.
         Err(e) => Err(format!("Failed to read file: {}", e)),
