@@ -5,6 +5,8 @@
 pub mod engines;
 pub mod ffmpeg;
 pub mod formats;
+pub mod libreoffice;
+pub mod pandoc;
 pub mod registry;
 
 use serde::Serialize;
@@ -134,8 +136,24 @@ async fn convert_file(
                 &app_handle,
             ).await
         },
-        Engine::LibreOffice => Err("LibreOffice not yet implemented (Phase 7)".to_string()),
-        Engine::Pandoc => Err("Pandoc not yet implemented (Phase 7)".to_string()),
+        Engine::LibreOffice => {
+            // Phase 7: LibreOffice headless — best for rendered document fidelity
+            crate::libreoffice::run_libreoffice(
+                &source_path,
+                &target_ext,
+                &output_dir,
+            ).await
+        },
+        Engine::Pandoc => {
+            // Phase 7: Pandoc — best for text/markup structural conversions
+            // We pass source_ext so Pandoc knows which format it's reading FROM.
+            crate::pandoc::run_pandoc(
+                &source_path,
+                &source_ext,
+                &target_ext,
+                &output_dir,
+            ).await
+        },
     }
 }
 
