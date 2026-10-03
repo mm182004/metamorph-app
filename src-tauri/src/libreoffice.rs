@@ -2,23 +2,6 @@
 // libreoffice.rs — LibreOffice headless document conversion engine
 // ============================================================
 //
-// CONCEPT: Synchronous subprocess inside an async context
-// LibreOffice conversions are fast (typically < 5 seconds) and don't
-// produce parseable progress output, so we use the blocking
-// `std::process::Command` API — but wrapped in `tokio::task::spawn_blocking`
-// so we don't starve tokio's async runtime.
-//
-// `spawn_blocking` runs the closure on a dedicated OS thread from
-// tokio's blocking thread pool, while the async task that called it
-// suspends and yields to let other async work proceed.
-//
-// CONCEPT: `move` closures and ownership
-// When we pass a closure to `spawn_blocking`, the closure must be
-// `'static` (no borrows from the stack) and `Send` (safe to ship
-// across threads). The `move` keyword takes *ownership* of the
-// variables we need inside the closure — the values are moved in
-// rather than borrowed.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -109,9 +92,6 @@ pub async fn run_libreoffice(
         .join(format!("{}.{}", source_stem, target_ext));
 
     // 4. Clone values to move into the blocking closure.
-    // CONCEPT: Clone for spawn_blocking
-    // `spawn_blocking` requires all captured values to be 'static (owned).
-    // Strings are cloneable, so we clone the &str values into owned Strings.
     let soffice = soffice.clone();
     let lo_format = lo_format.to_string();
     let source_path = source_path.to_string();
@@ -119,9 +99,6 @@ pub async fn run_libreoffice(
     let expected_output_clone = expected_output.clone();
 
     // 5. Run LibreOffice on a blocking thread.
-    // CONCEPT: tokio::task::spawn_blocking
-    // Closures passed here run on a dedicated OS thread so the async
-    // runtime's cooperative scheduler isn't blocked.
     tokio::task::spawn_blocking(move || {
         // LibreOffice command:
         //   soffice --headless --convert-to pdf --outdir /path/to/dir /path/to/file.docx
@@ -150,10 +127,6 @@ pub async fn run_libreoffice(
 
         Ok(expected_output_clone.to_string_lossy().to_string())
     })
-    // CONCEPT: Flattening a nested Result
-    // `spawn_blocking` itself returns `Result<Result<String, String>, JoinError>`.
-    // `.await?` unwraps the outer JoinError, leaving us with `Result<String, String>`.
-    // We `.map_err()` the JoinError into a String first so the types align.
     .await
     .map_err(|e| format!("spawn_blocking failed: {}", e))?
 }

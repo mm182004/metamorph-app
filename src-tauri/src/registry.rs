@@ -2,9 +2,6 @@
 // registry.rs — Conversion registry: source → valid targets
 // ============================================================
 
-// CONCEPT: Modules importing from sibling modules
-// `use crate::formats::FileFormat` imports the enum we defined in formats.rs.
-// `crate::` is Rust's way of referring to "the root of *this* crate (project)".
 use crate::engines::Engine;
 use crate::formats::FileFormat;
 
@@ -12,9 +9,6 @@ use serde::{Deserialize, Serialize};
 
 /// A single entry in the registry:  one valid target for a given source format.
 ///
-/// CONCEPT: Structs
-/// A `struct` groups related data together, like an object in JS/Python.
-/// This one pairs a target format with the engine that handles the conversion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionTarget {
     /// The format we can convert *into*.
@@ -29,7 +23,6 @@ pub struct ConversionTarget {
 impl ConversionTarget {
     /// Convenience constructor.
     fn new(format: FileFormat, engine: Engine) -> Self {
-        // All entries start as "available"; the first-run setup phase (Phase 9)
         // will flip `available = false` for entries whose binary is missing.
         Self { format, engine, available: true }
     }
@@ -37,13 +30,6 @@ impl ConversionTarget {
 
 /// Look up all valid conversion targets for a given source format.
 ///
-/// CONCEPT: Returning owned `Vec<T>` vs. borrowing `&[T]`
-/// We return a `Vec<ConversionTarget>` (an owned, growable list on the heap).
-/// This is the easiest approach because the list is built fresh each call and
-/// the caller (a Tauri command) needs to own the data to serialize it as JSON.
-///
-/// The `match` arms group formats by category, each spelling out exactly which
-/// targets are valid and which engine handles them.
 pub fn get_conversion_targets(source: &FileFormat) -> Vec<ConversionTarget> {
     match source {
         // ── Images ──────────────────────────────────────────────────────────

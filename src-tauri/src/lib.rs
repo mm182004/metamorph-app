@@ -1,7 +1,3 @@
-// CONCEPT: `mod` declarations
-// Rust modules live in separate files, but the compiler only knows about them
-// if you declare them here with `mod`. Think of this as "registering" each file
-// as part of the project.
 pub mod engines;
 pub mod ffmpeg;
 pub mod formats;
@@ -12,19 +8,12 @@ pub mod setup;
 
 use serde::Serialize;
 
-// Pull specific items from our modules into this file's scope.
-// `use` is Rust's equivalent of `import` in JS/TypeScript.
 use formats::FileFormat;
 use registry::{get_conversion_targets, ConversionTarget};
 
-// ─── Phase 8: Structured Progress Events ────────────────────────────────────
 
 /// The payload sent to the frontend for real-time progress updates.
 ///
-/// CONCEPT: Structured Events
-/// Instead of just sending a raw number (like `50.0`), we send a JSON object.
-/// This allows the UI to show both a progress bar and a descriptive message
-/// like "Rendering PDF..." or "Encoding audio...".
 #[derive(Clone, Serialize)]
 pub struct ProgressPayload {
     pub percentage: f64,
@@ -49,7 +38,6 @@ fn get_app_info() -> AppInfo {
     }
 }
 
-// ─── Phase 3: File Type Detection ───────────────────────────────────────────
 
 #[tauri::command]
 fn detect_file_type(path: &str) -> Result<String, String> {
@@ -72,17 +60,9 @@ fn detect_file_type(path: &str) -> Result<String, String> {
     }
 }
 
-// ─── Phase 4: Conversion Registry ───────────────────────────────────────────
 
 /// Returns the list of valid conversion targets for a given source format extension.
 ///
-/// CONCEPT: Chaining Option methods
-/// `FileFormat::from_extension(ext)` returns an `Option<FileFormat>`.
-/// Instead of writing an `if let Some(...) { ... } else { ... }`, we use
-/// `.map(...)` and `.unwrap_or_default()`:
-///   - `.map(|fmt| ...)` transforms the `Some` value if it exists.
-///   - `.unwrap_or_default()` returns an empty `Vec` if the format was `None`
-///     (i.e. unsupported extension) — no panic, no crash.
 #[tauri::command]
 fn get_targets(source_ext: &str) -> Vec<ConversionTarget> {
     FileFormat::from_extension(source_ext)
@@ -101,7 +81,6 @@ fn cancel_conversion(state: State<'_, CancellationState>) {
     state.0.store(true, Ordering::SeqCst);
 }
 
-// ─── Phase 5 & 6: Conversion Execution ──────────────────────────────────────
 
 /// Executes the conversion by looking up the correct engine in the registry.
 #[tauri::command]
@@ -143,7 +122,6 @@ async fn convert_file(
             crate::engines::convert_image(&source_path, &target_ext, &output_dir, &app_handle)
         },
         Engine::Ffmpeg => {
-            // Phase 6 & 9: Resolve the FFmpeg binaries securely
             let ffmpeg_bin = crate::setup::resolve_binary(&app_handle, "ffmpeg")
                 .ok_or_else(|| "FFmpeg is not installed.".to_string())?;
             let ffprobe_bin = crate::setup::resolve_binary(&app_handle, "ffprobe")

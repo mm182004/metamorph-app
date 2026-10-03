@@ -2,15 +2,6 @@
 // setup.rs — First-Run Setup & Portable Binaries
 // ============================================================
 //
-// CONCEPT: The App Data Directory
-// Tauri's `AppHandle::path().app_data_dir()` gives us a secure,
-// user-specific folder (like `C:\Users\Name\AppData\Roaming\metamorph\`)
-// where we can store downloaded binaries without needing Admin rights.
-//
-// CONCEPT: Streaming Downloads
-// We use `reqwest` with the `stream` feature to download large files
-// piece-by-piece, emitting progress events to the UI so it doesn't look frozen.
-
 use std::fs;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
@@ -128,7 +119,6 @@ async fn download_and_extract(
     name: &str,
     files_to_extract: Vec<&str>,
 ) -> Result<(), String> {
-    // Phase 1: Download
     let _ = app.emit("setup-progress", ProgressPayload {
         percentage: 0.0,
         message: format!("Downloading {}...", name),
@@ -159,7 +149,6 @@ async fn download_and_extract(
         });
     }
 
-    // Phase 2: Extraction
     let _ = app.emit("setup-progress", ProgressPayload {
         percentage: 90.0,
         message: format!("Extracting {}...", name),

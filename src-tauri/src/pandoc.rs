@@ -46,10 +46,6 @@ fn pandoc_to_format(ext: &str) -> Option<&'static str> {
 
 /// Build Pandoc argument list.
 ///
-/// CONCEPT: Vec<String> for subprocess arguments
-/// We collect arguments as an owned `Vec<String>`.  This lets us
-/// conditionally push extra flags (like `--pdf-engine`) without
-/// awkward if/else chains inside `Command::args()`.
 fn build_pandoc_args(
     source_path: &str,
     from_fmt: &str,

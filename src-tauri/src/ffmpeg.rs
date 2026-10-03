@@ -2,27 +2,6 @@
 // ffmpeg.rs — FFmpeg engine: async subprocess with progress parsing
 // ============================================================
 //
-// CONCEPT: Async Subprocesses with tokio
-// In a desktop app, we must NEVER block the main thread while waiting
-// for a long-running process like FFmpeg.  Tauri's `#[tauri::command]`
-// functions marked `async` run on tokio's thread pool.  Inside them we
-// can use `tokio::process::Command` — an async version of the standard
-// library's `std::process::Command` — to spawn FFmpeg and read its
-// output line-by-line without freezing the UI.
-//
-// CONCEPT: Piping stderr
-// FFmpeg writes progress information to stderr (not stdout).  It uses
-// a special `-progress pipe:2` flag that prints machine-readable
-// key=value lines to stderr, including `out_time_us` (microseconds of
-// output processed so far).  By comparing that to the total duration,
-// we can compute a percentage.
-//
-// CONCEPT: Tauri's emit()
-// `AppHandle::emit("event-name", payload)` pushes a real-time event
-// to the React frontend over Tauri's IPC channel.  The frontend can
-// listen with `listen("event-name", callback)`.  This is the push-based
-// model described in Phase 8 of the project plan.
-
 use std::path::Path;
 use tauri::Emitter;  // Tauri v2 requires this trait in scope to call .emit()
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -69,12 +48,6 @@ impl FfmpegProgress {
 
 /// Probe the total duration of a media file using `ffprobe`.
 ///
-/// CONCEPT: Why a separate function?
-/// We need the total duration *before* we start converting so we can
-/// calculate percentage progress.  `ffprobe` is a companion binary
-/// that ships with every FFmpeg distribution.
-///
-/// Returns the duration in microseconds, or an error string.
 async fn probe_duration(ffprobe_path: &str, source_path: &str) -> Result<f64, String> {
     let output = Command::new(ffprobe_path)
         .args([
@@ -83,9 +56,6 @@ async fn probe_duration(ffprobe_path: &str, source_path: &str) -> Result<f64, St
             "-of", "default=noprint_wrappers=1:nokey=1",
             source_path,
         ])
-        // CONCEPT: `.output()` collects all of stdout/stderr into memory.
-        // We `.await` because this is an async function — tokio will suspend
-        // this task and let other work proceed until ffprobe finishes.
         .output()
         .await
         .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
@@ -109,10 +79,6 @@ async fn probe_duration(ffprobe_path: &str, source_path: &str) -> Result<f64, St
 
 /// Build the FFmpeg argument list for a given conversion.
 ///
-/// CONCEPT: Ownership of Strings in a Vec
-/// We build a `Vec<String>` because each argument is an owned, heap-allocated
-/// string.  When we later pass them to `Command::args()`, Rust borrows them
-/// automatically.
 fn build_ffmpeg_args(
     source_path: &str,
     output_path: &str,
@@ -195,9 +161,6 @@ pub async fn run_ffmpeg(
 
     let mut child = Command::new(ffmpeg_path)
         .args(&args)
-        // CONCEPT: Stdio piping
-        // We redirect stderr to a pipe so we can read it asynchronously.
-        // stdout is left inherited (FFmpeg writes nothing useful there).
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .spawn()
