@@ -6,6 +6,8 @@ use std::fs;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use futures_util::StreamExt;
 use zip::ZipArchive;
 use serde::Serialize;
@@ -102,7 +104,11 @@ pub fn resolve_binary(app: &AppHandle, name: &str) -> Option<String> {
     #[cfg(not(windows))]
     let cmd = "which";
 
-    if let Ok(output) = std::process::Command::new(cmd).arg(name).output() {
+    let mut find_cmd = std::process::Command::new(cmd);
+    #[cfg(target_os = "windows")]
+    find_cmd.creation_flags(0x08000000);
+
+    if let Ok(output) = find_cmd.arg(name).output() {
         if output.status.success() {
             return Some(name.to_string()); // Trust the OS PATH
         }

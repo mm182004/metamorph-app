@@ -49,7 +49,11 @@ impl FfmpegProgress {
 /// Probe the total duration of a media file using `ffprobe`.
 ///
 async fn probe_duration(ffprobe_path: &str, source_path: &str) -> Result<f64, String> {
-    let output = Command::new(ffprobe_path)
+    let mut cmd = Command::new(ffprobe_path);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    
+    let output = cmd
         .args([
             "-v", "quiet",
             "-show_entries", "format=duration",
@@ -159,7 +163,11 @@ pub async fn run_ffmpeg(
     // 3. Build argument list and spawn FFmpeg.
     let args = build_ffmpeg_args(source_path, &output_str, target_ext);
 
-    let mut child = Command::new(ffmpeg_path)
+    let mut cmd = Command::new(ffmpeg_path);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let mut child = cmd
         .args(&args)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())

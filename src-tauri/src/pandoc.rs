@@ -16,6 +16,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 
 /// Map source extension → Pandoc's `-f` (from) format name.
@@ -66,7 +68,11 @@ fn build_pandoc_args(
     // find one itself.
     if to_fmt == "pdf" {
         // Try wkhtmltopdf first (common on Windows, no full LaTeX install needed)
-        if Command::new("wkhtmltopdf").arg("--version").output().is_ok() {
+        let mut check_cmd = Command::new("wkhtmltopdf");
+        #[cfg(target_os = "windows")]
+        check_cmd.creation_flags(0x08000000);
+        
+        if check_cmd.arg("--version").output().is_ok() {
             args.extend(["--pdf-engine", "wkhtmltopdf"].map(String::from));
         }
         // Otherwise let Pandoc pick whatever it finds (lualatex, pdflatex, etc.)
@@ -131,7 +137,11 @@ pub async fn run_pandoc(
     tokio::task::spawn_blocking(move || {
         let args = build_pandoc_args(&source_path, &from_fmt, &to_fmt, &output_str_clone);
 
-        let output = Command::new(&pandoc_bin)
+        let mut cmd = Command::new(&pandoc_bin);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+
+        let output = cmd
             .args(&args)
             .output()
             .map_err(|e| format!("Failed to start Pandoc: {}", e))?;

@@ -4,6 +4,8 @@
 //
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 /// Detect the LibreOffice binary name on the current OS.
 ///
@@ -12,7 +14,10 @@ use std::process::Command;
 /// common Windows install path as a fallback.
 pub fn find_libreoffice() -> Option<String> {
     // Try the standard `soffice` command on PATH first
-    if Command::new("soffice").arg("--version").output().is_ok() {
+    let mut cmd = Command::new("soffice");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    if cmd.arg("--version").output().is_ok() {
         return Some("soffice".to_string());
     }
 
@@ -102,7 +107,11 @@ pub async fn run_libreoffice(
     tokio::task::spawn_blocking(move || {
         // LibreOffice command:
         //   soffice --headless --convert-to pdf --outdir /path/to/dir /path/to/file.docx
-        let output = Command::new(&soffice)
+        let mut cmd = Command::new(&soffice);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+        
+        let output = cmd
             .args([
                 "--headless",
                 "--convert-to", &lo_format,
