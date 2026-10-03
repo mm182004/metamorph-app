@@ -131,38 +131,6 @@ impl FileFormat {
             FileFormat::Html     => "html",
         }
     }
-
-    /// Human-readable display name for the UI.
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            FileFormat::Jpeg     => "JPEG Image",
-            FileFormat::Png      => "PNG Image",
-            FileFormat::WebP     => "WebP Image",
-            FileFormat::Gif      => "GIF Image",
-            FileFormat::Bmp      => "Bitmap Image",
-            FileFormat::Tiff     => "TIFF Image",
-
-            FileFormat::Mp4      => "MP4 Video",
-            FileFormat::Mkv      => "Matroska Video",
-            FileFormat::Mov      => "QuickTime Video",
-            FileFormat::Avi      => "AVI Video",
-            FileFormat::WebM     => "WebM Video",
-
-            FileFormat::Mp3      => "MP3 Audio",
-            FileFormat::M4a      => "M4A Audio",
-            FileFormat::Wav      => "WAV Audio",
-            FileFormat::Flac     => "FLAC Audio",
-            FileFormat::Ogg      => "OGG Audio",
-
-            FileFormat::Pdf      => "PDF Document",
-            FileFormat::Docx     => "Word Document",
-            FileFormat::Odt      => "OpenDocument Text",
-
-            FileFormat::Txt      => "Plain Text",
-            FileFormat::Markdown => "Markdown",
-            FileFormat::Html     => "HTML Document",
-        }
-    }
 }
 
 // CONCEPT: Implementing a standard Trait — `fmt::Display`

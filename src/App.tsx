@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { openUrl, openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 interface AppInfo {
@@ -56,7 +57,184 @@ function normalizeTargets(rawTargets: Array<{ format: string; engine: string; av
   });
 }
 
-export function App() {
+function formatSize(bytes?: number): string {
+  if (!bytes) return "";
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+interface QueueItemCardProps {
+  item: QueueItem;
+  isActive: boolean;
+  isConverting: boolean;
+  onItemFormatChange: (id: string, newFormat: string) => void;
+  onRemove: (id: string) => void;
+  onRetry: (id: string) => void;
+  onCancel: (item: QueueItem) => void;
+}
+
+const QueueItemCard = memo(function QueueItemCard({
+  item,
+  isActive,
+  isConverting,
+  onItemFormatChange,
+  onRemove,
+  onRetry,
+  onCancel,
+}: QueueItemCardProps) {
+  const sizeLabel = formatSize(item.size);
+
+  return (
+    <div className={`queue-item ${isActive ? "active" : ""} status-${item.status}`}>
+      <div className="queue-item-main">
+        <div className="queue-item-left">
+          <div className="file-icon">{item.extension}</div>
+          <div className="file-details">
+            <div className="file-name" title={item.name}>
+              {item.name}
+            </div>
+            <div className="file-meta" title={item.path}>
+              {sizeLabel ? `${sizeLabel} · ` : ""}{item.path}
+            </div>
+          </div>
+        </div>
+
+        <div className="queue-item-right">
+          <select
+            className="format-select"
+            style={{ width: "auto", minWidth: "110px", padding: "6px 10px", fontSize: "0.82rem" }}
+            value={item.targetFormat}
+            disabled={isConverting || item.status === "done" || item.availableTargets.length === 0}
+            onChange={(e) => onItemFormatChange(item.id, e.target.value)}
+            aria-label={`Target format for ${item.name}`}
+          >
+            {item.availableTargets.length === 0 ? (
+              <option value="">No formats</option>
+            ) : (
+              item.availableTargets.map((t) => (
+                <option key={t.targetExt} value={t.targetExt}>
+                  .{t.targetExt.toUpperCase()}
+                </option>
+              ))
+            )}
+          </select>
+
+          <span className={`status-tag ${item.status}`}>
+            {item.status === "converting" ? `${item.progress}%` : item.status}
+          </span>
+
+          {item.status === "done" && item.outputPath ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <button
+                className="btn-action-open"
+                onClick={() => openPath(item.outputPath!)}
+                title="Open converted file in default application"
+              >
+                Open
+              </button>
+              <button
+                className="btn-action-reveal"
+                onClick={() => revealItemInDir(item.outputPath!)}
+                title="Reveal in File Explorer"
+                aria-label={`Show ${item.name} in folder`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+              <button
+                className="remove-btn"
+                onClick={() => onRemove(item.id)}
+                aria-label={`Remove ${item.name} from list`}
+                title="Remove from list"
+              >
+                ✕
+              </button>
+            </div>
+          ) : item.status === "converting" ? (
+            <button
+              className="btn-action-cancel"
+              onClick={() => onCancel(item)}
+              title="Cancel this conversion and proceed to next"
+            >
+              Cancel
+            </button>
+          ) : item.status === "error" || item.status === "cancelled" ? (
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button
+                className="btn-action-retry"
+                onClick={() => onRetry(item.id)}
+                title="Retry conversion"
+              >
+                Retry
+              </button>
+              <button
+                className="remove-btn"
+                onClick={() => onRemove(item.id)}
+                aria-label={`Remove ${item.name} from queue`}
+                title="Remove from queue"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              className="remove-btn"
+              onClick={() => onRemove(item.id)}
+              aria-label={`Remove ${item.name} from queue`}
+              title="Remove from queue"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {item.status === "converting" && (
+        <div className="item-progress-section">
+          <div className="item-progress-header">
+            <span>{item.progressMessage}</span>
+            <span>{item.progress}%</span>
+          </div>
+          <div
+            className="item-progress-track"
+            role="progressbar"
+            aria-valuenow={item.progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="item-progress-fill" style={{ width: `${item.progress}%` }}></div>
+          </div>
+        </div>
+      )}
+
+      {item.status === "done" && item.outputPath && (
+        <div
+          style={{
+            fontSize: "0.76rem",
+            color: "var(--success)",
+            textAlign: "left",
+            cursor: "pointer",
+            textDecoration: "underline",
+          }}
+          onClick={() => revealItemInDir(item.outputPath!)}
+          title="Click to reveal in folder"
+        >
+          Saved to: {item.outputPath}
+        </div>
+      )}
+
+      {item.status === "error" && (
+        <div style={{ fontSize: "0.76rem", color: "var(--danger)", textAlign: "left" }}>
+          {item.error || item.progressMessage} · Check format compatibility or click Retry
+        </div>
+      )}
+    </div>
+  );
+});
+
+export default function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<QueueItem[]>([]);
@@ -72,7 +250,6 @@ export function App() {
   const [setupMessage, setSetupMessage] = useState("");
   const [isSettingUp, setIsSettingUp] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const activeFileIdRef = useRef<string | null>(null);
   const stopBatchRef = useRef(false);
   const masterFormatRef = useRef("");
@@ -172,7 +349,7 @@ export function App() {
       // Ctrl+O / Cmd+O: Browse files
       if (modKey && (e.key === "o" || e.key === "O")) {
         e.preventDefault();
-        fileInputRef.current?.click();
+        handleBrowseFiles();
         return;
       }
 
@@ -298,14 +475,16 @@ export function App() {
     setIsDragging(false);
   }
 
-  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files && e.target.files.length > 0) {
-      const selected = Array.from(e.target.files).map((f) => ({
-        path: (f as any).path || f.name,
-        size: f.size,
-      }));
-      addFiles(selected);
-      e.target.value = "";
+  async function handleBrowseFiles() {
+    try {
+      const selected = await open({ multiple: true });
+      if (Array.isArray(selected)) {
+        addFiles(selected.map((path) => ({ path })));
+      } else if (typeof selected === "string") {
+        addFiles([{ path: selected }]);
+      }
+    } catch (err) {
+      console.error("Failed to open dialog:", err);
     }
   }
 
@@ -323,15 +502,15 @@ export function App() {
     );
   }
 
-  function handleItemFormatChange(id: string, newFormat: string) {
+  const handleItemFormatChange = useCallback((id: string, newFormat: string) => {
     setFiles((prev) =>
       prev.map((f) => (f.id === id ? { ...f, targetFormat: newFormat } : f))
     );
-  }
+  }, []);
 
-  function handleRemoveFile(id: string) {
+  const handleRemoveFile = useCallback((id: string) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
-  }
+  }, []);
 
   function handleClearQueue() {
     if (isConverting) return;
@@ -343,7 +522,7 @@ export function App() {
     setFiles((prev) => prev.filter((f) => f.status !== "done"));
   }
 
-  function handleRetryFile(id: string) {
+  const handleRetryFile = useCallback((id: string) => {
     setFiles((prev) =>
       prev.map((f) =>
         f.id === id
@@ -357,10 +536,10 @@ export function App() {
           : f
       )
     );
-  }
+  }, []);
 
-  async function handleCancelFile(item: QueueItem) {
-    if (item.id === activeFileId) {
+  const handleCancelFile = useCallback(async (item: QueueItem) => {
+    if (item.id === activeFileIdRef.current) {
       try {
         await invoke("cancel_conversion");
       } catch (e) {
@@ -371,7 +550,7 @@ export function App() {
         prev.map((f) => (f.id === item.id ? { ...f, status: "cancelled", progressMessage: "Cancelled" } : f))
       );
     }
-  }
+  }, []);
 
   async function handleStopAll() {
     stopBatchRef.current = true;
@@ -477,12 +656,6 @@ export function App() {
     }
   }
 
-  function formatSize(bytes?: number): string {
-    if (!bytes) return "";
-    const kb = bytes / 1024;
-    if (kb < 1024) return `${kb.toFixed(1)} KB`;
-    return `${(kb / 1024).toFixed(1)} MB`;
-  }
 
   // Derive master format options with counts of applicable files
   const pendingOrFailed = files.filter(
@@ -572,15 +745,6 @@ export function App() {
           </div>
         </div>
       )}
-
-      {/* Hidden file input for click-to-browse */}
-      <input
-        type="file"
-        multiple
-        ref={fileInputRef}
-        onChange={handleFileInputChange}
-        style={{ display: "none" }}
-      />
 
       {/* App Header */}
       <header className="app-header">
@@ -693,11 +857,11 @@ export function App() {
             tabIndex={0}
             role="button"
             aria-label="Drop files to convert or press Enter to browse files"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={handleBrowseFiles}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                fileInputRef.current?.click();
+                handleBrowseFiles();
               }
             }}
           >
@@ -721,11 +885,11 @@ export function App() {
             tabIndex={0}
             role="button"
             aria-label="Drop more files here or press Enter to browse files"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={handleBrowseFiles}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                fileInputRef.current?.click();
+                handleBrowseFiles();
               }
             }}
             title="Click or drop to add more files to queue"
@@ -753,8 +917,9 @@ export function App() {
             <div className="batch-actions">
               {masterFormatOptions.length > 0 && (
                 <div className="master-select-wrap">
-                  <span className="master-select-label">Convert All To:</span>
+                  <label htmlFor="master-format-select" className="master-select-label">Convert All To:</label>
                   <select
+                    id="master-format-select"
                     className="format-select"
                     style={{ width: "auto", padding: "6px 12px" }}
                     value={masterFormat}
@@ -826,171 +991,21 @@ export function App() {
         {/* Queue List of File Cards */}
         {files.length > 0 && (
           <div className="queue-scroll">
-            {files.map((item) => {
-              const isActive = item.id === activeFileId;
-              const sizeLabel = formatSize(item.size);
-
-              return (
-                <div
-                  key={item.id}
-                  className={`queue-item ${isActive ? "active" : ""} status-${item.status}`}
-                >
-                  <div className="queue-item-main">
-                    <div className="queue-item-left">
-                      <div className="file-icon">{item.extension}</div>
-                      <div className="file-details">
-                        <div className="file-name" title={item.name}>
-                          {item.name}
-                        </div>
-                        <div className="file-meta" title={item.path}>
-                          {sizeLabel ? `${sizeLabel} · ` : ""}{item.path}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="queue-item-right">
-                      {/* Format Selector per item */}
-                      <select
-                        className="format-select"
-                        style={{ width: "auto", minWidth: "110px", padding: "6px 10px", fontSize: "0.82rem" }}
-                        value={item.targetFormat}
-                        disabled={isConverting || item.status === "done" || item.availableTargets.length === 0}
-                        onChange={(e) => handleItemFormatChange(item.id, e.target.value)}
-                        aria-label={`Target format for ${item.name}`}
-                      >
-                        {item.availableTargets.length === 0 ? (
-                          <option value="">No formats</option>
-                        ) : (
-                          item.availableTargets.map((t) => (
-                            <option key={t.targetExt} value={t.targetExt}>
-                              .{t.targetExt.toUpperCase()}
-                            </option>
-                          ))
-                        )}
-                      </select>
-
-                      {/* Status Tag */}
-                      <span className={`status-tag ${item.status}`}>
-                        {item.status === "converting" ? `${item.progress}%` : item.status}
-                      </span>
-
-                      {/* Action Buttons: Open & Reveal when done, Cancel when converting, Retry when error/cancelled, Remove when pending */}
-                      {item.status === "done" && item.outputPath ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <button
-                            className="btn-action-open"
-                            onClick={() => openPath(item.outputPath!)}
-                            title="Open converted file in default application"
-                          >
-                            Open
-                          </button>
-                          <button
-                            className="btn-action-reveal"
-                            onClick={() => revealItemInDir(item.outputPath!)}
-                            title="Reveal in File Explorer"
-                            aria-label={`Show ${item.name} in folder`}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                            </svg>
-                          </button>
-                          <button
-                            className="remove-btn"
-                            onClick={() => handleRemoveFile(item.id)}
-                            aria-label={`Remove ${item.name} from list`}
-                            title="Remove from list"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ) : item.status === "converting" ? (
-                        <button
-                          className="btn-action-cancel"
-                          onClick={() => handleCancelFile(item)}
-                          title="Cancel this conversion and proceed to next"
-                        >
-                          Cancel
-                        </button>
-                      ) : item.status === "error" || item.status === "cancelled" ? (
-                        <div style={{ display: "flex", gap: "6px" }}>
-                          <button
-                            className="btn-action-retry"
-                            onClick={() => handleRetryFile(item.id)}
-                            title="Retry conversion"
-                          >
-                            Retry
-                          </button>
-                          <button
-                            className="remove-btn"
-                            onClick={() => handleRemoveFile(item.id)}
-                            aria-label={`Remove ${item.name} from queue`}
-                            title="Remove from queue"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          className="remove-btn"
-                          onClick={() => handleRemoveFile(item.id)}
-                          aria-label={`Remove ${item.name} from queue`}
-                          title="Remove from queue"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Inline Progress Bar for actively converting item */}
-                  {item.status === "converting" && (
-                    <div className="item-progress-section">
-                      <div className="item-progress-header">
-                        <span>{item.progressMessage}</span>
-                        <span>{item.progress}%</span>
-                      </div>
-                      <div
-                        className="item-progress-track"
-                        role="progressbar"
-                        aria-valuenow={item.progress}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      >
-                        <div className="item-progress-fill" style={{ width: `${item.progress}%` }}></div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Status/Error note for completed, error, or cancelled */}
-                  {item.status === "done" && item.outputPath && (
-                    <div
-                      style={{
-                        fontSize: "0.76rem",
-                        color: "var(--success)",
-                        textAlign: "left",
-                        cursor: "pointer",
-                        textDecoration: "underline",
-                      }}
-                      onClick={() => revealItemInDir(item.outputPath!)}
-                      title="Click to reveal in folder"
-                    >
-                      Saved to: {item.outputPath}
-                    </div>
-                  )}
-
-                  {item.status === "error" && (
-                    <div style={{ fontSize: "0.76rem", color: "var(--danger)", textAlign: "left" }}>
-                      {item.error || item.progressMessage} · Check format compatibility or click Retry
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {files.map((item) => (
+              <QueueItemCard
+                key={item.id}
+                item={item}
+                isActive={item.id === activeFileId}
+                isConverting={isConverting}
+                onItemFormatChange={handleItemFormatChange}
+                onRemove={handleRemoveFile}
+                onRetry={handleRetryFile}
+                onCancel={handleCancelFile}
+              />
+            ))}
           </div>
         )}
       </main>
     </div>
   );
 }
-
-export default App;

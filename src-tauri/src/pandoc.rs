@@ -17,21 +17,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Detect the Pandoc binary on the current system.
-fn find_pandoc() -> Option<String> {
-    // Try standard PATH first
-    if Command::new("pandoc").arg("--version").output().is_ok() {
-        return Some("pandoc".to_string());
-    }
-
-    // Common Windows install path (Pandoc's MSI installer default)
-    let win_path = r"C:\Program Files\Pandoc\pandoc.exe";
-    if Path::new(win_path).exists() {
-        return Some(win_path.to_string());
-    }
-
-    None
-}
 
 /// Map source extension → Pandoc's `-f` (from) format name.
 fn pandoc_from_format(ext: &str) -> Option<&'static str> {

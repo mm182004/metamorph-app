@@ -12,7 +12,7 @@
 // piece-by-piece, emitting progress events to the UI so it doesn't look frozen.
 
 use std::fs;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 use futures_util::StreamExt;

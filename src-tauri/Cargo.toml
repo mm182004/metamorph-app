@@ -28,7 +28,7 @@ tokio = { version = "1.53.1", features = ["process", "io-util", "rt", "time", "s
 reqwest = { version = "0.13.5", features = ["stream"] }
 zip = "8.6.0"
 futures-util = "0.3.34"
-bytes = "1.12.1"
+tauri-plugin-dialog = "2.8.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

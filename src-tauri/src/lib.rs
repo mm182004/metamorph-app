@@ -49,16 +49,6 @@ fn get_app_info() -> AppInfo {
     }
 }
 
-#[tauri::command]
-fn ping_engine(target_format: &str) -> String {
-    format!("Rust engine acknowledged target format: {target_format}")
-}
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {name}! You've been greeted from Rust!")
-}
-
 // ─── Phase 3: File Type Detection ───────────────────────────────────────────
 
 #[tauri::command]
@@ -146,12 +136,11 @@ async fn convert_file(
     }
 
     // 3. Dispatch to the right engine based on the registry's tag
-    use crate::engines::{ConversionEngine, Engine, ImageCrateEngine};
+    use crate::engines::Engine;
     
     match target.engine {
         Engine::ImageCrate => {
-            let engine = ImageCrateEngine;
-            engine.convert(&source_path, &target_ext, &output_dir, &app_handle)
+            crate::engines::convert_image(&source_path, &target_ext, &output_dir, &app_handle)
         },
         Engine::Ffmpeg => {
             // Phase 6 & 9: Resolve the FFmpeg binaries securely
@@ -199,10 +188,9 @@ pub fn run() {
     tauri::Builder::default()
         .manage(cancel_state)
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
-            ping_engine,
-            greet,
             detect_file_type,
             get_targets,
             convert_file,
